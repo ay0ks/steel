@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct PeekBuffer<T>
 where
@@ -5,7 +6,9 @@ where
 {
     data: Vec<T>,
     history: Vec<T>,
-    index: usize,
+    pub index: usize,
+    pub line: usize,
+    pub column: usize,
     history_index: usize,
 }
 
@@ -18,6 +21,8 @@ where
             data,
             history: Vec::new(),
             index: 0,
+            line: 0,
+            column: 0,
             history_index: 0,
         }
     }
@@ -41,7 +46,9 @@ where
         } else {
             let mut result = Vec::new();
             for i in range_begin..range_end {
-                result.push(self.data.get(i).unwrap());
+                if i % step == 0 {
+                    result.push(self.data.get(i).unwrap());
+                }
             }
             Some(result)
         }
@@ -213,7 +220,7 @@ where
             None
         } else {
             let mut result = Vec::new();
-            for i in 0..n {
+            for _ in 0..n {
                 result.push(self.history.pop().unwrap());
             }
             for i in 0..n {
@@ -237,6 +244,22 @@ where
     }
 }
 
+impl PeekBuffer<char> {
+    pub fn advance_char(&mut self) {
+        if self.index < self.data.len() {
+            if let Some(&c) = self.peek() {
+                if c == '\n' {
+                    self.line += 1;
+                    self.column = 0;
+                } else {
+                    self.column += 1;
+                }
+            }
+            self.advance();
+        }
+    }
+}
+
 impl<T> Iterator for PeekBuffer<T>
 where
     T: Clone,
@@ -254,7 +277,7 @@ where
 
 impl From<String> for PeekBuffer<char> {
     fn from(s: String) -> Self {
-        Self::new(s.chars().collect())
+        PeekBuffer::from(s.as_str())
     }
 }
 
