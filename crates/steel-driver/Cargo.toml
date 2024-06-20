@@ -5,4 +5,5 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+unicode_names2 = "1.2.2"
 peekable-fwd-bwd = "1"

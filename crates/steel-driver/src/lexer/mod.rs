@@ -1,6 +1,8 @@
-use core::slice::Iter;
+use core::{panic, slice::Iter};
+extern crate unicode_names2;
 use peekable_fwd_bwd::Peekable;
-use std::{io::Chain, slice::range, str::Chars};
+use std::str::Chars;
+use unicode_names2::character;
 
 mod marker;
 mod token;
@@ -25,8 +27,9 @@ macro_rules! token_variant {
     };
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Lexer<const BWD: usize, const FWD: usize> {
+    lines: Vec<String>,
     position_start: (usize, usize),
     position_end: (usize, usize),
 }
@@ -34,8 +37,9 @@ pub struct Lexer<const BWD: usize, const FWD: usize> {
 impl<const BWD: usize, const FWD: usize> Lexer<BWD, FWD> {
     pub fn new() -> Self {
         Self {
-            position_start: (1, 0),
-            position_end: (1, 0),
+            lines: Vec::new(),
+            position_start: (1, 1),
+            position_end: (1, 1),
         }
     }
 
@@ -99,46 +103,75 @@ impl<const BWD: usize, const FWD: usize> Lexer<BWD, FWD> {
                     self.position_end.1 += 1;
                     value = '\x0b'; // vertical tab
                 }
-                x if x.is_numeric() => {
-                    // octal escape
-                    input.next();
-                    self.position_end.1 += 1;
-                }
-                'x' => {
-                    // hex escape
+                'u' => {
                     input.next();
                     self.position_end.1 += 1;
 
                     let mut escape = String::new();
-                    for _ in 0..2 {
-                        if let Some(&cc) = input.peek() {
-                            if cc.is_ascii_hexdigit() {
-                                escape.push(cc);
-                                input.next();
-                                self.position_end.1 += 1;
+                    if let Some(&c) = input.peek() {
+                        if c == '{' {
+                            input.next();
+                            self.position_end.1 += 1;
+
+                            'value_loop: loop {
+                                if let Some(&c) = input.peek() {
+                                    if c == '}' {
+                                        input.next();
+                                        self.position_end.1 += 1;
+                                        break 'value_loop;
+                                    } else if c.is_digit(16) {
+                                        escape.push(c);
+                                        input.next();
+                                        self.position_end.1 += 1;
+                                    } else {
+                                        panic!("Invalid unicode escape sequence");
+                                    }
+                                } else if let None = input.peek() {
+                                    panic!("Unterminated unicode escape sequence");
+                                }
                             }
-                        } else if let None = input.peek() {
-                            panic!("Invalid hex escape sequence");
+                        } else {
+                            panic!("Invalid unicode escape sequence");
                         }
                     }
 
                     value =
                         char::from_u32(u32::from_str_radix(escape.as_str(), 16).unwrap()).unwrap();
                 }
-                'u' => {
-                    input.next();
-                    self.position_end.1 += 1;
-                    value = 'u';
-                }
                 'U' => {
                     input.next();
                     self.position_end.1 += 1;
-                    value = 'U';
-                }
-                'N' => {
-                    input.next();
-                    self.position_end.1 += 1;
-                    value = 'N';
+
+                    let mut escape = String::new();
+                    if let Some(&c) = input.peek() {
+                        if c == '{' {
+                            input.next();
+                            self.position_end.1 += 1;
+
+                            'value_loop: loop {
+                                if let Some(&c) = input.peek() {
+                                    if c == '}' {
+                                        input.next();
+                                        self.position_end.1 += 1;
+                                        break 'value_loop;
+                                    } else {
+                                        escape.push(c);
+                                        self.position_end.1 += 1;
+                                        input.next();
+                                    }
+                                } else if let None = input.peek() {
+                                    panic!("Unterminated unicode escape sequence");
+                                }
+                            }
+                        } else {
+                            panic!("Invalid unicode escape sequence");
+                        }
+                    }
+
+                    value = match character(escape.as_str()) {
+                        Some(x) => x,
+                        None => panic!("Invalid unicode escape sequence"),
+                    };
                 }
                 _ => {
                     panic!("Invalid escape sequence");
@@ -181,8 +214,8 @@ impl<const BWD: usize, const FWD: usize> Lexer<BWD, FWD> {
                     }
                 } else {
                     value.push(c);
-                    input.next();
                     self.position_end.1 += 1;
+                    input.next();
                 }
             } else if let None = input.peek() {
                 panic!("Unterminated string literal");
@@ -248,6 +281,8 @@ impl<const BWD: usize, const FWD: usize> Lexer<BWD, FWD> {
     }
 
     pub fn lex<'a>(&mut self, input: String) -> Vec<Token> {
+        self.lines = input.lines().map(|x| x.to_string()).collect();
+
         let mut tokens = Vec::new();
         let mut input = Peekable::<Iter<char>, BWD, FWD>::new(input.chars());
 
@@ -261,7 +296,7 @@ impl<const BWD: usize, const FWD: usize> Lexer<BWD, FWD> {
             if ['\n', '\r'].contains(&c) {
                 input.next();
                 self.position_end.0 += 1;
-                self.position_end.1 = 0;
+                self.position_end.1 = 1;
                 continue;
             }
 
